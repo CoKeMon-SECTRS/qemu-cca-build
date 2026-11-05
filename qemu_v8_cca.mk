@@ -31,6 +31,7 @@ RUST_ENABLE ?= y
 include common.mk
 
 DEBUG ?= 1
+$(info DEBUG is $(DEBUG))
 
 # Option to build with GICV3 enabled
 GICV3 ?= y
@@ -168,15 +169,19 @@ else
 TF_A_LOGLVL ?= 40
 TF_A_OUT = $(TF_A_PATH)/build/qemu/debug
 endif
+TF_A_LOGLVL = 40
 
 TF_A_FLAGS ?= \
-	BL33=$(BL33_BIN) \
+	ARM_LINUX_KERNEL_AS_BL33=1 \
 	PLAT=qemu \
 	QEMU_USE_GIC_DRIVER=$(TFA_GIC_DRIVER) \
 	DEBUG=$(TF_A_DEBUG) \
 	LOG_LEVEL=$(TF_A_LOGLVL) \
 	ENABLE_RME=1 \
-	RMM=$(RMM_BIN)
+	RMM=$(RMM_BIN) \
+	PRELOADED_BL33_BASE=0xc0000000
+	# PRELOADED_BL33_BASE=0x80000000
+	# BL33=$(BL33_BIN) \
 
 TF_A_FLAGS_BL32_OPTEE  = BL32=$(OPTEE_OS_HEADER_V2_BIN)
 TF_A_FLAGS_BL32_OPTEE += BL32_EXTRA1=$(OPTEE_OS_PAGER_V2_BIN)
@@ -272,7 +277,7 @@ else
 endif
 	ln -sf $(BL33_BIN) $(BINARIES_PATH)/bl33.bin
 
-arm-tf-clean: edk2-clean rmm-clean
+arm-tf-clean:
 	$(TF_A_EXPORTS) $(MAKE) -C $(TF_A_PATH) $(TF_A_FLAGS) clean
 
 ################################################################################
@@ -632,15 +637,13 @@ run-only:
 	$(call launch-terminal,54323,"Realm")
 	$(call wait-for-ports,54322,54323)
 	cd $(BINARIES_PATH) && $(QEMU_BUILD)/qemu-system-aarch64 \
-         -M virt,virtualization=on,secure=on,gic-version=3 \
+         -M virt,virtualization=on,secure=on,gic-version=3,iommu=smmuv3 \
          -M acpi=off -cpu max,x-rme=on,sme=off,pauth-impdef=on \
-         -m 8G -smp 4 \
+         -m 4G -smp 1 \
          -nographic \
          -bios flash.bin \
-         -kernel Image \
          -drive format=raw,if=none,file=$(ROOT)/out-br/images/rootfs.ext4,id=hd0 \
          -device virtio-blk-pci,drive=hd0 \
-         -append root=/dev/vda \
          -nodefaults \
          -serial tcp:localhost:54320 \
          -serial tcp:localhost:54321 \
@@ -650,11 +653,26 @@ run-only:
          -chardev socket,mux=on,id=hvc1,port=54323,host=localhost \
          -device virtio-serial-device \
          -device virtconsole,chardev=hvc1 \
-         -append "root=/dev/vda earlycon console=hvc0 nokaslr" \
          -device virtio-net-pci,netdev=net0 \
          -netdev user,id=net0 \
          -device virtio-9p-device,fsdev=shr0,mount_tag=shr0 \
-         -fsdev local,security_model=none,path=../../,id=shr0
+         -fsdev local,security_model=none,path=../../,id=shr0 \
+	 -dtb cca.dtb \
+	 -monitor stdio \
+	 -gdb tcp::1234 \
+	 -drive id=sd_disk,file=$(ROOT)/fake-disk/log.img,if=none,format=raw \
+	 -device sdhci-pci,id=sdhci \
+	 -device sd-card,drive=sd_disk,spec_version=3 \
+	 -device loader,file=Image_Micro_Switch,addr=0xc0000000 \
+	 -device loader,file=Image_Linux,addr=0x80000000
+	 # -S \
+	 # -device ich9-ahci,id=ahci0 -drive id=log_disk,file=/tmp/log.img,if=none,format=raw -device ide-hd,drive=log_disk,bus=ahci0.0,serial=LOGDISK \
+	 # -device loader,file=Image_Micro_emmc_qemu,addr=0xc0000000 \
+	 # -d int \
+         # -M virt,virtualization=on,secure=on,gic-version=3 \
+         # -append root=/dev/vda \
+         # -append "root=/dev/vda earlycon console=hvc0 nokaslr" \
+         # -kernel Image \
 
 ifneq ($(filter check check-rust,$(MAKECMDGOALS)),)
 CHECK_DEPS := all
